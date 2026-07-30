@@ -1,0 +1,66 @@
+# Centralized Claude PR review — single source of truth for the whole fleet.
+# Every repo calls this via a thin caller workflow:
+#
+#   jobs:
+#     review:
+#       uses: byscott-io/infrabyscott/.github/workflows/claude-pr-review.yml@master
+#       secrets:
+#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+#
+# Edit the review prompt / skip rules HERE and every repo's review behavior
+# updates on its next PR. Skip rules (draft, Dependabot) live here so callers
+# stay thin and inherit them automatically.
+name: Claude PR Review (reusable)
+
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      # PAT with repo write, handed to the action as an input. This enterprise
+      # forbids granting the workflow GITHUB_TOKEN any write scope, so writes
+      # (review comments, reactions) MUST flow through this token, not the
+      # workflow permissions. Do NOT add `permissions: *: write` here — the
+      # enterprise rejects the run at validation.
+      CLAUDE_GH_TOKEN:
+        required: true
+
+jobs:
+  review:
+    # Central skip rules: never review draft PRs or Dependabot dep-bump PRs.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.CLAUDE_GH_TOKEN }}
+          track_progress: "true"
+          claude_args: "--max-turns 15"
+          prompt: |
+            Review this pull request for a Rails + React application in the ByScott fleet.
+            First read the repository's CLAUDE.md and honor its project-specific rules.
+
+            Report only real, actionable issues — do NOT nitpick style that RuboCop /
+            ESLint already enforce, and don't invent problems. Prioritize in this order:
+
+            1. Correctness & bugs — logic errors, unhandled edge cases, nil handling,
+               race conditions, and anything risking data loss or a bad migration.
+            2. Security — authn/authz gaps, injection, unsafe params, secret/PII
+               exposure, and cross-account / multi-tenant leakage.
+            3. Tests — is the new behavior covered by RSpec specs? Flag missing or weak
+               coverage; for bug fixes, prefer a fail-then-pass proof spec.
+            4. Fleet conventions (from CLAUDE.md) — keep code DRY; React over raw HTML;
+               modals over separate form pages; RSpec over Minitest.
+
+            Be concise: a one-line summary of the change, then findings ranked
+            most-severe first, each with file:line and a concrete suggested fix. If the
+            PR is clean, say so briefly instead of manufacturing findings.

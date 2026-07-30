@@ -1,0 +1,41 @@
+# Centralized interactive Claude — responds to @claude mentions on issues/PRs.
+# Callers trigger on comment events + guard on '@claude'; this reusable holds
+# the action config so it's controlled fleet-wide from infra.
+#
+#   on:
+#     issue_comment: { types: [created] }
+#     pull_request_review_comment: { types: [created] }
+#   jobs:
+#     claude:
+#       if: contains(github.event.comment.body, '@claude')
+#       uses: byscott-io/infrabyscott/.github/workflows/claude-mention.yml@master
+#       secrets:
+#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+name: Claude Mention (reusable)
+
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+      # PAT with repo write, handed to the action as an input. This enterprise
+      # forbids granting the workflow GITHUB_TOKEN write, so all writes (replies,
+      # reactions, any code changes) flow through this token. Do NOT add
+      # `permissions: *: write` — the enterprise rejects the run at validation.
+      CLAUDE_GH_TOKEN:
+        required: true
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.CLAUDE_GH_TOKEN }}
+          # no `prompt` => interactive mode: reads and responds to the @claude comment
