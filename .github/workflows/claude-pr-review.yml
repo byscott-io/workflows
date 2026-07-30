@@ -39,6 +39,25 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Defer the review until the PR's OTHER checks (CI: rspec, rubocop, etc.)
+      # have settled, so Claude reads real CI conclusions rather than "pending".
+      # Excludes this review's own check to avoid waiting on itself; bounded so a
+      # stuck check can't hang the job (it proceeds and reports whatever exists).
+      - name: Wait for CI to finish
+        env:
+          GH_TOKEN: ${{ secrets.CLAUDE_GH_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for i in $(seq 1 45); do
+            pending=$(gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --json name,state \
+              --jq '[.[] | select((.name | test("Claude"; "i") | not)
+                     and (.state | test("pending|queued|in_progress|waiting")))] | length' \
+              2>/dev/null || echo 0)
+            echo "iter $i: $pending non-Claude checks still running"
+            [ "$pending" = "0" ] && { echo "CI settled"; break; }
+            sleep 20
+          done
+
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
