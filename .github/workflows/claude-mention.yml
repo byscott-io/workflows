@@ -1,7 +1,9 @@
 # Centralized interactive Claude — responds to @claude mentions on issues/PRs.
-# Callers trigger on comment events + guard on '@claude'; this reusable holds the
-# action config. Auth via a GitHub App token (bot identity), same as the review
-# workflow — works under the enterprise read-only GITHUB_TOKEN.
+# On a PR mention it DEFAULTS to a full formal review (Approve/Request-changes),
+# no explicit "review this" needed. Callers trigger on comment events + guard on
+# '@claude'. Auth via a GitHub App token (bot identity). Bash is disabled by
+# default in claude-code-action, so --allowedTools (which REPLACES the default
+# allowlist) grants the gh tool needed to fetch the diff/CI and run gh pr review.
 name: Claude Mention (reusable)
 
 on:
@@ -35,6 +37,8 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          # no `prompt` => interactive mode: reads and responds to the @claude comment.
-          # System-prompt reminder so ad-hoc reviews read CI instead of running suites.
-          claude_args: '--model claude-sonnet-5 --max-turns 40 --append-system-prompt "You run in a GitHub Actions sandbox: you generally cannot run the project test or lint suites (rspec, rubocop, yarn) or fetch other branches. Do not attempt them or flag them as gaps. For test, lint, and build status, read the PR already-run CI checks via gh (you have a token)."'
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 40
+            --allowedTools "Read,Grep,Glob,Bash(gh pr *)"
+            --append-system-prompt "You are running in a GitHub Actions sandbox and have the gh CLI. If you are mentioned on a PULL REQUEST, DEFAULT to performing a full formal code review of that PR even when the comment gives no explicit instruction; only skip the review if the comment clearly asks for something else specific, in which case do that instead. To review PR #${{ github.event.issue.number || github.event.pull_request.number }}: read the diff via 'gh pr diff ${{ github.event.issue.number || github.event.pull_request.number }}' and CI via 'gh pr checks ${{ github.event.issue.number || github.event.pull_request.number }}' (CI is the source of truth for tests, lint and build — do NOT run rspec, rubocop or yarn yourself, and do NOT report that as a gap; just flag any failing check). Read CLAUDE.md and honor the repo conventions. Report only real, actionable issues (correctness, security, RSpec coverage of new behavior, fleet conventions), most-severe first with file and line plus a concrete fix. Then you MUST submit a FORMAL review by actually RUNNING this command (do not just describe it): gh pr review ${{ github.event.issue.number || github.event.pull_request.number }} --<decision> --body <your write-up>. Choose <decision> at MODERATE strictness: request-changes for a correctness or security bug, a data-loss or migration risk, or new behavior with NO test coverage; otherwise approve; use comment only if genuinely uncertain. This is advisory only. If this is a plain ISSUE (not a pull request), just respond to the request normally."
