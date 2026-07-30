@@ -1,6 +1,21 @@
-# TEMP MINIMAL — bisecting a "workflow file issue" that only hits the review
-# workflow (the mention reusable, same auth, validates fine). Restore full
-# version once the offending element is identified.
+# Centralized Claude PR review — single source of truth for the whole fleet.
+# Repos call this via a thin caller:
+#
+#   jobs:
+#     review:
+#       uses: byscott-io/workflows/.github/workflows/claude-pr-review.yml@master
+#       secrets:
+#         ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
+#         CLAUDE_APP_ID:          ${{ secrets.CLAUDE_APP_ID }}
+#         CLAUDE_APP_PRIVATE_KEY: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+#
+# NOTE: pull_request uses the workflow file from the PR's branch, so the caller
+# must exist on the PR's head branch (branch from up-to-date master).
+# Public repo so both public and private fleet repos can call it. Edit the
+# prompt / skip rules / strictness here → every repo updates. No secrets stored
+# here. Auth is a GitHub App installation token (bot identity): required for
+# formal Approve/Request-changes (a user can't review their own PR) and works
+# under the enterprise's read-only GITHUB_TOKEN (we declare only contents:read).
 name: Claude PR Review (reusable)
 
 on:
@@ -15,6 +30,10 @@ on:
 
 jobs:
   review:
+    # Central skip rules: never review draft PRs or Dependabot dep-bump PRs.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,8 +49,69 @@ jobs:
           app-id: ${{ secrets.CLAUDE_APP_ID }}
           private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
 
+      # Defer the review until the PR's OTHER checks (CI: rspec, rubocop, etc.)
+      # settle, so Claude reads real CI conclusions rather than "pending".
+      # Excludes this review's own check; bounded so a stuck check can't hang it.
+      - name: Wait for CI to finish
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for i in $(seq 1 45); do
+            pending=$(gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --json name,state \
+              --jq '[.[] | select((.name | test("Claude"; "i") | not)
+                     and (.state | test("pending|queued|in_progress|waiting")))] | length' \
+              2>/dev/null || echo 0)
+            echo "iter $i: $pending non-Claude checks still running"
+            [ "$pending" = "0" ] && { echo "CI settled"; break; }
+            sleep 20
+          done
+
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          prompt: "Review this PR briefly and post a comment."
+          track_progress: "true"
+          claude_args: "--model claude-sonnet-5 --max-turns 40"
+          prompt: |
+            Review this pull request for a Rails + React application in the ByScott fleet.
+            First read the repository's CLAUDE.md and honor its project-specific rules.
+
+            IMPORTANT — this review runs in a GitHub Actions sandbox: you generally
+            CANNOT run the project's test or lint suites (bundle exec rspec / rubocop,
+            yarn) and cannot fetch other branches. Do NOT attempt them, and do NOT
+            report "couldn't run specs/rubocop" as a gap. For test / lint / build
+            status, read the PR's ALREADY-RUN CI results instead — e.g.
+            `gh pr checks <number>` or the checks API (you have a token) — and treat
+            those conclusions as the source of truth, calling out any failing check.
+
+            Report only real, actionable issues — do NOT nitpick style that RuboCop /
+            ESLint already enforce, and don't invent problems. Prioritize in this order:
+
+            1. Correctness & bugs — logic errors, unhandled edge cases, nil handling,
+               race conditions, and anything risking data loss or a bad migration.
+            2. Security — authn/authz gaps, injection, unsafe params, secret/PII
+               exposure, and cross-account / multi-tenant leakage.
+            3. Tests — is the new behavior covered by RSpec specs? Flag missing or weak
+               coverage; for bug fixes, prefer a fail-then-pass proof spec.
+            4. Fleet conventions (from CLAUDE.md) — keep code DRY; React over raw HTML;
+               modals over separate form pages; RSpec over Minitest.
+
+            Be concise: a one-line summary of the change, then findings ranked
+            most-severe first, each with file:line and a concrete suggested fix. If the
+            PR is clean, say so briefly instead of manufacturing findings.
+
+            Then CONCLUDE by submitting a FORMAL pull-request review (not just a
+            comment) via `gh pr review <number>` with your write-up as the body.
+            Apply the "${{ contains(fromJSON('["lenient","moderate","strict"]'), vars.CLAUDE_REVIEW_STRICTNESS) && vars.CLAUDE_REVIEW_STRICTNESS || 'moderate' }}" strictness level (unrecognized/empty falls back to moderate):
+              - lenient  : --request-changes ONLY for an outright correctness/security
+                           bug or data-loss risk; otherwise --approve.
+              - moderate : --request-changes for a correctness/security bug,
+                           data-loss/migration risk, OR new behavior with NO test
+                           coverage; --approve if only nits/polish remain.
+              - strict   : everything in moderate, PLUS weak/partial coverage or
+                           convention violations also warrant --request-changes.
+            Use --comment only when genuinely uncertain or notes are informational.
+            This is advisory (branch protection does not require it), so prefer
+            --approve for non-blocking issues and reserve --request-changes for things
+            that genuinely should block a merge.
