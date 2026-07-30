@@ -9,13 +9,18 @@
 #         CLAUDE_APP_ID:          ${{ secrets.CLAUDE_APP_ID }}
 #         CLAUDE_APP_PRIVATE_KEY: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
 #
-# NOTE: pull_request uses the workflow file from the PR's branch, so the caller
-# must exist on the PR's head branch (branch from up-to-date master).
+# NOTE: pull_request uses the workflow file from the PR's HEAD branch, so the
+# caller must exist on that branch (branch from up-to-date master).
 # Public repo so both public and private fleet repos can call it. Edit the
-# prompt / skip rules / strictness here → every repo updates. No secrets stored
-# here. Auth is a GitHub App installation token (bot identity): required for
-# formal Approve/Request-changes (a user can't review their own PR) and works
-# under the enterprise's read-only GITHUB_TOKEN (we declare only contents:read).
+# prompt / skip rules / strictness here → every repo updates. No secrets stored.
+# Auth is a GitHub App installation token (bot identity): needed for formal
+# Approve/Request-changes (a user can't review their own PR) and works under the
+# enterprise read-only GITHUB_TOKEN (we declare only contents:read).
+#
+# claude-code-action has NO native formal-review input and DISABLES Bash by
+# default, so the model can't run `gh pr review` unless we allow it. IMPORTANT:
+# --allowedTools REPLACES the default allowlist, so every tool the review needs
+# must be listed here.
 name: Claude PR Review (reusable)
 
 on:
@@ -49,14 +54,22 @@ jobs:
           app-id: ${{ secrets.CLAUDE_APP_ID }}
           private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
 
-      # Defer the review until the PR's OTHER checks (CI: rspec, rubocop, etc.)
-      # settle, so Claude reads real CI conclusions rather than "pending".
-      # Excludes this review's own check; bounded so a stuck check can't hang it.
+      # Defer the review until the PR's OTHER checks (CI) have both APPEARED and
+      # settled, so Claude reads real CI conclusions. First wait for a non-Claude
+      # check to register (avoids the open-race where none exist yet), then wait
+      # for them to finish. Bounded so a stuck/absent check can't hang the job.
       - name: Wait for CI to finish
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
+          # give CI a moment to register its checks
+          for i in $(seq 1 6); do
+            n=$(gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --json name \
+              --jq '[.[]|select(.name|test("Claude";"i")|not)]|length' 2>/dev/null || echo 0)
+            [ "$n" != "0" ] && break
+            echo "waiting for CI checks to appear ($i)"; sleep 10
+          done
           for i in $(seq 1 45); do
             pending=$(gh pr checks "$PR" --repo "$GITHUB_REPOSITORY" --json name,state \
               --jq '[.[] | select((.name | test("Claude"; "i") | not)
@@ -71,47 +84,39 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          track_progress: "true"
-          claude_args: "--model claude-sonnet-5 --max-turns 40"
+          claude_args: '--model claude-sonnet-5 --max-turns 40 --allowedTools "Read,Grep,Glob,Bash(gh pr *)"'
           prompt: |
-            Review this pull request for a Rails + React application in the ByScott fleet.
-            First read the repository's CLAUDE.md and honor its project-specific rules.
+            You are reviewing pull request #${{ github.event.pull_request.number }} for a
+            Rails + React application in the ByScott fleet. You have the `gh` CLI.
 
-            IMPORTANT — this review runs in a GitHub Actions sandbox: you generally
-            CANNOT run the project's test or lint suites (bundle exec rspec / rubocop,
-            yarn) and cannot fetch other branches. Do NOT attempt them, and do NOT
-            report "couldn't run specs/rubocop" as a gap. For test / lint / build
-            status, read the PR's ALREADY-RUN CI results instead — e.g.
-            `gh pr checks <number>` or the checks API (you have a token) — and treat
-            those conclusions as the source of truth, calling out any failing check.
+            Gather context yourself:
+            - `gh pr diff ${{ github.event.pull_request.number }}` — the change
+            - `gh pr checks ${{ github.event.pull_request.number }}` — CI results, the
+              SOURCE OF TRUTH for test/lint/build. Do NOT run rspec/rubocop/yarn yourself
+              (the sandbox can't) and do NOT report that as a gap; just call out any
+              failing check.
+            - read CLAUDE.md and any files you need via Read/Grep/Glob, and honor the
+              repo's project-specific rules.
 
-            Report only real, actionable issues — do NOT nitpick style that RuboCop /
-            ESLint already enforce, and don't invent problems. Prioritize in this order:
+            Report only real, actionable issues — don't nitpick what RuboCop/ESLint
+            enforce, don't invent problems — prioritized:
+            1. Correctness & bugs   2. Security   3. Tests (RSpec coverage of new
+            behavior; prefer a fail-then-pass proof for bug fixes)   4. Fleet
+            conventions from CLAUDE.md (DRY; React over raw HTML; modals over form pages).
 
-            1. Correctness & bugs — logic errors, unhandled edge cases, nil handling,
-               race conditions, and anything risking data loss or a bad migration.
-            2. Security — authn/authz gaps, injection, unsafe params, secret/PII
-               exposure, and cross-account / multi-tenant leakage.
-            3. Tests — is the new behavior covered by RSpec specs? Flag missing or weak
-               coverage; for bug fixes, prefer a fail-then-pass proof spec.
-            4. Fleet conventions (from CLAUDE.md) — keep code DRY; React over raw HTML;
-               modals over separate form pages; RSpec over Minitest.
+            Then you MUST submit a FORMAL review by actually RUNNING this command (a
+            comment is not enough — run it, don't just describe it):
 
-            Be concise: a one-line summary of the change, then findings ranked
-            most-severe first, each with file:line and a concrete suggested fix. If the
-            PR is clean, say so briefly instead of manufacturing findings.
+              gh pr review ${{ github.event.pull_request.number }} --<decision> --body "<your review>"
 
-            Then CONCLUDE by submitting a FORMAL pull-request review (not just a
-            comment) via `gh pr review <number>` with your write-up as the body.
-            Apply the "${{ contains(fromJSON('["lenient","moderate","strict"]'), vars.CLAUDE_REVIEW_STRICTNESS) && vars.CLAUDE_REVIEW_STRICTNESS || 'moderate' }}" strictness level (unrecognized/empty falls back to moderate):
-              - lenient  : --request-changes ONLY for an outright correctness/security
-                           bug or data-loss risk; otherwise --approve.
-              - moderate : --request-changes for a correctness/security bug,
+            Choose <decision> per the "${{ contains(fromJSON('["lenient","moderate","strict"]'), vars.CLAUDE_REVIEW_STRICTNESS) && vars.CLAUDE_REVIEW_STRICTNESS || 'moderate' }}" strictness level (unrecognized/empty → moderate):
+              - lenient  : "request-changes" ONLY for an outright correctness/security bug
+                           or data-loss risk; otherwise "approve".
+              - moderate : "request-changes" for a correctness/security bug,
                            data-loss/migration risk, OR new behavior with NO test
-                           coverage; --approve if only nits/polish remain.
-              - strict   : everything in moderate, PLUS weak/partial coverage or
-                           convention violations also warrant --request-changes.
-            Use --comment only when genuinely uncertain or notes are informational.
-            This is advisory (branch protection does not require it), so prefer
-            --approve for non-blocking issues and reserve --request-changes for things
-            that genuinely should block a merge.
+                           coverage; otherwise "approve".
+              - strict   : moderate PLUS weak/partial coverage or convention violations
+                           also warrant "request-changes".
+            Use "comment" only when genuinely uncertain. This is advisory (branch
+            protection does not require it), so prefer "approve" for non-blocking issues.
+            Put a one-line summary + ranked findings (file:line + concrete fix) in --body.
