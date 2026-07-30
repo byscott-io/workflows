@@ -1,16 +1,7 @@
 # Centralized interactive Claude — responds to @claude mentions on issues/PRs.
-# Callers trigger on comment events + guard on '@claude'; this reusable holds
-# the action config so it's controlled fleet-wide from infra.
-#
-#   on:
-#     issue_comment: { types: [created] }
-#     pull_request_review_comment: { types: [created] }
-#   jobs:
-#     claude:
-#       if: contains(github.event.comment.body, '@claude')
-#       uses: byscott-io/infrabyscott/.github/workflows/claude-mention.yml@master
-#       secrets:
-#         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+# Callers trigger on comment events + guard on '@claude'; this reusable holds the
+# action config. Auth via a GitHub App token (bot identity), same as the review
+# workflow — works under the enterprise read-only GITHUB_TOKEN.
 name: Claude Mention (reusable)
 
 on:
@@ -18,11 +9,9 @@ on:
     secrets:
       ANTHROPIC_API_KEY:
         required: true
-      # PAT with repo write, handed to the action as an input. This enterprise
-      # forbids granting the workflow GITHUB_TOKEN write, so all writes (replies,
-      # reactions, any code changes) flow through this token. Do NOT add
-      # `permissions: *: write` — the enterprise rejects the run at validation.
-      CLAUDE_GH_TOKEN:
+      CLAUDE_APP_ID:
+        required: true
+      CLAUDE_APP_PRIVATE_KEY:
         required: true
 
 jobs:
@@ -34,10 +23,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Generate app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.CLAUDE_APP_ID }}
+          private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          github_token: ${{ secrets.CLAUDE_GH_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
           # no `prompt` => interactive mode: reads and responds to the @claude comment.
-          # System-prompt reminder so ad-hoc reviews read CI instead of trying to run suites.
+          # System-prompt reminder so ad-hoc reviews read CI instead of running suites.
           claude_args: '--model claude-sonnet-5 --max-turns 40 --append-system-prompt "You run in a GitHub Actions sandbox: you generally cannot run the project test or lint suites (rspec, rubocop, yarn) or fetch other branches. Do not attempt them or flag them as gaps. For test, lint, and build status, read the PR already-run CI checks via gh (you have a token)."'
