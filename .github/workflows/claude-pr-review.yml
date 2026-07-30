@@ -63,7 +63,8 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.CLAUDE_GH_TOKEN }}
           track_progress: "true"
-          claude_args: "--max-turns 15"
+          # Sonnet for predictable review cost; generous-but-bounded turn cap.
+          claude_args: "--model claude-sonnet-5 --max-turns 40"
           prompt: |
             Review this pull request for a Rails + React application in the ByScott fleet.
             First read the repository's CLAUDE.md and honor its project-specific rules.
