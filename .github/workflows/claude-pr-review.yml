@@ -104,7 +104,7 @@ jobs:
 
             Then CONCLUDE by submitting a FORMAL pull-request review (not just a
             comment) via `gh pr review <number>` with your write-up as the body.
-            Apply the "${{ contains(fromJSON('["lenient","moderate","strict"]'), vars.CLAUDE_REVIEW_STRICTNESS) && vars.CLAUDE_REVIEW_STRICTNESS || 'moderate' }}" strictness level (unrecognized/empty falls back to moderate):
+            Apply the "moderate" strictness level (TEMP hardcoded to isolate a vars-expression failure):
               - lenient  : --request-changes ONLY for an outright correctness/security
                            bug or data-loss risk; otherwise --approve.
               - moderate : --request-changes for a correctness/security bug,
