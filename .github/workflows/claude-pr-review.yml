@@ -49,6 +49,14 @@ jobs:
             Review this pull request for a Rails + React application in the ByScott fleet.
             First read the repository's CLAUDE.md and honor its project-specific rules.
 
+            IMPORTANT — this review runs in a GitHub Actions sandbox: you generally
+            CANNOT run the project's test or lint suites (bundle exec rspec / rubocop,
+            yarn) and cannot fetch other branches. Do NOT attempt them, and do NOT
+            report "couldn't run specs/rubocop" as a gap. For test / lint / build
+            status, read the PR's ALREADY-RUN CI results instead — e.g.
+            `gh pr checks <number>` or the checks API (you have a token) — and treat
+            those conclusions as the source of truth, calling out any failing check.
+
             Report only real, actionable issues — do NOT nitpick style that RuboCop /
             ESLint already enforce, and don't invent problems. Prioritize in this order:
 

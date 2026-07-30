@@ -38,4 +38,6 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.CLAUDE_GH_TOKEN }}
-          # no `prompt` => interactive mode: reads and responds to the @claude comment
+          # no `prompt` => interactive mode: reads and responds to the @claude comment.
+          # System-prompt reminder so ad-hoc reviews read CI instead of trying to run suites.
+          claude_args: '--append-system-prompt "You run in a GitHub Actions sandbox: you generally cannot run the project test or lint suites (rspec, rubocop, yarn) or fetch other branches. Do not attempt them or flag them as gaps. For test, lint, and build status, read the PR already-run CI checks via gh (you have a token)."'
