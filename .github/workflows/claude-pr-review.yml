@@ -97,6 +97,10 @@ jobs:
               failing check.
             - read CLAUDE.md and any files you need via Read/Grep/Glob, and honor the
               repo's project-specific rules.
+            - if `.github/claude-review.md` exists in this repo, read it and apply its
+              items as ADDITIONAL, repo-specific review checks (e.g. this repo's
+              deploy/release checklist) ON TOP of the standard checks below. Report on
+              each of its items explicitly.
 
             Report only real, actionable issues — don't nitpick what RuboCop/ESLint
             enforce, don't invent problems — prioritized:
