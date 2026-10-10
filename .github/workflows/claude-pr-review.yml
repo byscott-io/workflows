@@ -17,6 +17,11 @@
 # Approve/Request-changes (a user can't review their own PR) and works under the
 # enterprise read-only GITHUB_TOKEN (we declare only contents:read).
 #
+# The allowlist is ALSO spelled out in the prompt. It is not belt-and-braces: a
+# reviewer that cannot see the boundary probes it, and three runs on 2026-10-10
+# spent 11, 13 and 16 of 40 turns on refused calls, two of them exhausting the
+# budget before any verdict was submitted. Turns were raised to 60 for headroom,
+# but naming the boundary is what stops the waste. Widen BOTH together.
 # claude-code-action has NO native formal-review input and DISABLES Bash by
 # default, so the model can't run `gh pr review` unless we allow it. IMPORTANT:
 # --allowedTools REPLACES the default allowlist, so every tool the review needs
@@ -90,10 +95,20 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          claude_args: '--model claude-sonnet-5 --max-turns 40 --allowedTools "Read,Grep,Glob,Bash(gh pr *)"'
+          claude_args: '--model claude-sonnet-5 --max-turns 60 --allowedTools "Read,Grep,Glob,Bash(gh pr *)"'
           prompt: |
             You are reviewing pull request #${{ github.event.pull_request.number }} for a
-            Rails + React application in the ByScott fleet. You have the `gh` CLI.
+            Rails + React application in the ByScott fleet.
+
+            TOOLS — this is the entire allowlist, and anything outside it is refused
+            and costs a turn. Runs have died at the turn limit with NO verdict posted
+            after spending a quarter of the budget on refused calls, so treat this as
+            a hard boundary rather than something to probe:
+              - Bash, but ONLY a command starting with "gh pr " — gh pr diff, checks,
+                view, review. NOT gh api, NOT git, NOT cat/ls/sed/wc/head, and NO pipe
+                or redirection: "gh pr diff N | head" is refused as a whole command.
+              - Read, Grep, Glob, over the repo, which is checked out beside you.
+            Budget accordingly: take the diff ONCE, then Read only the files you must.
 
             Gather context yourself:
             - `gh pr diff ${{ github.event.pull_request.number }}` — the change

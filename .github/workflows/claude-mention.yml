@@ -5,6 +5,11 @@
 # comment events + guard on '@claude'. Auth via a GitHub App token (bot identity).
 # Bash is disabled by default in claude-code-action, so --allowedTools (which
 # REPLACES the default allowlist) grants the gh tool needed to run gh pr review.
+# The allowlist is ALSO spelled out in the prompt. It is not belt-and-braces: a
+# reviewer that cannot see the boundary probes it, and three runs on 2026-10-10
+# spent 11, 13 and 16 of 40 turns on refused calls, two of them exhausting the
+# budget before any verdict was submitted. Turns were raised to 60 for headroom,
+# but naming the boundary is what stops the waste. Widen BOTH together.
 name: Claude Mention (reusable)
 
 on:
@@ -38,7 +43,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          claude_args: '--model claude-sonnet-5 --max-turns 40 --allowedTools "Read,Grep,Glob,Bash(gh pr *)"'
+          claude_args: '--model claude-sonnet-5 --max-turns 60 --allowedTools "Read,Grep,Glob,Bash(gh pr *)"'
           prompt: |
             You were mentioned with @claude on #${{ github.event.issue.number || github.event.pull_request.number }}
             (${{ (github.event.issue.pull_request || github.event.pull_request) && 'a PULL REQUEST' || 'an ISSUE' }})
@@ -47,6 +52,16 @@ jobs:
             ---
             ${{ github.event.comment.body }}
             ---
+
+            TOOLS — this is the entire allowlist, and anything outside it is refused
+            and costs a turn. Runs have died at the turn limit with NO verdict posted
+            after spending a quarter of the budget on refused calls, so treat this as
+            a hard boundary rather than something to probe:
+              - Bash, but ONLY a command starting with "gh pr " — gh pr diff, checks,
+                view, review. NOT gh api, NOT git, NOT cat/ls/sed/wc/head, and NO pipe
+                or redirection: "gh pr diff N | head" is refused as a whole command.
+              - Read, Grep, Glob, over the repo, which is checked out beside you.
+            Budget accordingly: take the diff ONCE, then Read only the files you must.
 
             Do what they ask. BUT if this is a PULL REQUEST you MUST ALWAYS finish by
             submitting a FORMAL review — regardless of how the comment is phrased, even if
