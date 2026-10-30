@@ -21,6 +21,11 @@ on:
         required: true
       CLAUDE_APP_PRIVATE_KEY:
         required: true
+      # Optional. Pass it and each run's cost is recorded in metricsbyscott as
+      # a claude_review.completed event; omit it and the cost still reaches the
+      # job summary and the PR, just without history.
+      METRICSBYSCOTT_API_KEY:
+        required: false
 
 jobs:
   claude:
@@ -40,6 +45,7 @@ jobs:
           private-key: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
 
       - uses: anthropics/claude-code-action@v1
+        id: claude
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
@@ -88,3 +94,23 @@ jobs:
 
             If this is a plain ISSUE (not a pull request), just respond to the request
             normally — no formal review needed.
+
+      # This workflow reported NO cost at all until now, which mattered more
+      # than it sounds: a PR that goes more than one round gets its first
+      # review from claude-pr-review and every re-review from here, so most
+      # reviews on a contested PR were unmeasured.
+      #
+      # On a PR the cost is appended to the review just submitted; on an issue,
+      # where there is no review, it is posted as a comment.
+      - name: Report run cost
+        if: always()
+        continue-on-error: true
+        uses: byscott-io/workflows/.github/actions/report-claude-cost@master
+        with:
+          execution_file: ${{ steps.claude.outputs.execution_file }}
+          conclusion: ${{ steps.claude.outputs.conclusion }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          pr_number: ${{ github.event.issue.number || github.event.pull_request.number }}
+          repo: ${{ github.repository }}
+          run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          metrics_key: ${{ secrets.METRICSBYSCOTT_API_KEY }}

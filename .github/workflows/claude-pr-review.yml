@@ -146,123 +146,25 @@ jobs:
             protection does not require it), so prefer "approve" for non-blocking issues.
             Put a one-line summary + ranked findings (file:line + concrete fix) in --body.
 
-      # What did this review cost? The action writes an execution log containing
-      # the run's token usage and cost; without this step it is discarded and
-      # the spend is only visible as an undifferentiated total in the Anthropic
-      # console. Always writes the numbers to the job summary; also records them
-      # in metricsbyscott when a key is supplied, so "what did reviews cost this
-      # month" becomes a query rather than an estimate.
+      # What did this review cost? -> the job summary, the review body itself,
+      # and metricsbyscott when a key is supplied.
+      #
+      # Referenced by full repo path, NOT `./.github/actions/...`: in a called
+      # workflow a relative action path resolves against the CALLER's checkout,
+      # so `./` would look for this action in corebyscott and fail.
       #
       # Never allowed to affect the review: runs even when the review failed,
-      # and any error here is swallowed. A cost report is not worth a red X on
-      # a review that actually succeeded.
+      # and any error is swallowed. A cost report is not worth a red X on a
+      # review that actually succeeded.
       - name: Report review cost
         if: always()
         continue-on-error: true
-        env:
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
-          CLAUDE_CONCLUSION: ${{ steps.claude.outputs.conclusion }}
-          METRICS_KEY: ${{ secrets.METRICSBYSCOTT_API_KEY }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python3 <<'PY'
-          import json, os, urllib.request
-
-          path = os.environ.get("EXECUTION_FILE") or ""
-          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-
-          def write_summary(text):
-              if summary_path:
-                  with open(summary_path, "a") as fh:
-                      fh.write(text + "\n")
-
-          if not path or not os.path.exists(path):
-              write_summary("### Review cost\n\nNo execution file was produced, so cost is unknown.")
-              raise SystemExit(0)
-
-          # The log is JSON-lines in some versions and a JSON array in others.
-          # Accept either rather than assume, and take the last result entry.
-          entries = []
-          with open(path) as fh:
-              raw = fh.read().strip()
-          try:
-              parsed = json.loads(raw)
-              entries = parsed if isinstance(parsed, list) else [parsed]
-          except json.JSONDecodeError:
-              for line in raw.splitlines():
-                  line = line.strip()
-                  if not line:
-                      continue
-                  try:
-                      entries.append(json.loads(line))
-                  except json.JSONDecodeError:
-                      pass
-
-          results = [e for e in entries if isinstance(e, dict) and e.get("type") == "result"]
-          if not results:
-              write_summary("### Review cost\n\nExecution file had no result entry; cost unknown.")
-              raise SystemExit(0)
-
-          r = results[-1]
-          usage = r.get("usage") or {}
-          cost = r.get("total_cost_usd")
-          turns = r.get("num_turns")
-          ms = r.get("duration_ms")
-
-          def n(v):
-              return v if isinstance(v, (int, float)) else 0
-
-          tokens_in = n(usage.get("input_tokens"))
-          tokens_out = n(usage.get("output_tokens"))
-          cache_read = n(usage.get("cache_read_input_tokens"))
-          cache_write = n(usage.get("cache_creation_input_tokens"))
-
-          cost_str = f"${cost:.4f}" if isinstance(cost, (int, float)) else "unknown"
-          write_summary(
-              "### Review cost\n\n"
-              f"| | |\n|---|---|\n"
-              f"| Cost | **{cost_str}** |\n"
-              f"| Input tokens | {tokens_in:,} |\n"
-              f"| Output tokens | {tokens_out:,} |\n"
-              f"| Cache read | {cache_read:,} |\n"
-              f"| Cache write | {cache_write:,} |\n"
-              f"| Turns | {turns if turns is not None else 'unknown'} |\n"
-              f"| Duration | {round(ms / 1000.0, 1) if isinstance(ms, (int, float)) else 'unknown'}s |\n"
-          )
-          print(f"review cost {cost_str}, {tokens_in} in / {tokens_out} out, {turns} turns")
-
-          key = os.environ.get("METRICS_KEY")
-          if not key:
-              print("no metricsbyscott key supplied; summary only")
-              raise SystemExit(0)
-
-          payload = {
-              "event": "claude_review.completed",
-              "properties": {
-                  "repo": os.environ.get("REPO"),
-                  "pr_number": os.environ.get("PR_NUMBER"),
-                  "conclusion": os.environ.get("CLAUDE_CONCLUSION"),
-                  "cost_usd": cost,
-                  "input_tokens": tokens_in,
-                  "output_tokens": tokens_out,
-                  "cache_read_input_tokens": cache_read,
-                  "cache_creation_input_tokens": cache_write,
-                  "num_turns": turns,
-                  "duration_ms": ms,
-                  "run_url": os.environ.get("RUN_URL"),
-              },
-          }
-          req = urllib.request.Request(
-              "https://metrics.byscott.io/api/events",
-              data=json.dumps(payload).encode(),
-              headers={"Content-Type": "application/json", "X-Metrics-Api-Key": key},
-              method="POST",
-          )
-          try:
-              with urllib.request.urlopen(req, timeout=15) as resp:
-                  print(f"recorded in metricsbyscott: HTTP {resp.status}")
-          except Exception as exc:  # noqa: BLE001 - reporting must never fail the job
-              print(f"could not record in metricsbyscott: {exc}")
-          PY
+        uses: byscott-io/workflows/.github/actions/report-claude-cost@master
+        with:
+          execution_file: ${{ steps.claude.outputs.execution_file }}
+          conclusion: ${{ steps.claude.outputs.conclusion }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          pr_number: ${{ github.event.pull_request.number }}
+          repo: ${{ github.repository }}
+          run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          metrics_key: ${{ secrets.METRICSBYSCOTT_API_KEY }}

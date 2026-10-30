@@ -1,0 +1,66 @@
+# What did this Claude run cost?
+#
+# The action writes an execution log containing the run's token usage and cost.
+# Without reading it the number is discarded and the spend is only visible as an
+# undifferentiated total in the Anthropic console.
+#
+# ONE composite action rather than a copy in each reusable workflow. The cost
+# logic lived inline in claude-pr-review.yml only, so every @claude re-review
+# went through claude-mention.yml and reported nothing at all -- which is most
+# reviews on a PR that goes more than one round. Two copies of this would have
+# drifted the same way.
+#
+# Three destinations, in increasing permanence:
+#   - the job summary, always;
+#   - the REVIEW BODY itself, so the cost is visible where the review is read
+#     rather than two clicks away in the Actions tab;
+#   - metricsbyscott, when a key is supplied, so "what did reviews cost this
+#     month" is a query rather than an estimate.
+#
+# Never allowed to affect the review: the caller runs this with `if: always()`
+# and `continue-on-error: true`. A cost report is not worth a red X on a review
+# that actually succeeded.
+name: Report Claude run cost
+description: Read a claude-code-action execution log and publish its cost and token usage.
+
+inputs:
+  execution_file:
+    description: steps.<claude>.outputs.execution_file
+    required: false
+  conclusion:
+    description: steps.<claude>.outputs.conclusion
+    required: false
+  github_token:
+    description: Token used to append the cost to the submitted review. Omit to skip that.
+    required: false
+  pr_number:
+    description: PR number, when this ran on a pull request.
+    required: false
+  repo:
+    description: owner/name
+    required: false
+  run_url:
+    description: Link back to this Actions run.
+    required: false
+  metrics_key:
+    description: METRICSBYSCOTT_API_KEY. Omit and the cost is summary-only, with no history.
+    required: false
+  metrics_url:
+    description: Events endpoint.
+    required: false
+    default: https://metrics.byscott.io/api/events
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        EXECUTION_FILE: ${{ inputs.execution_file }}
+        CLAUDE_CONCLUSION: ${{ inputs.conclusion }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        REPO: ${{ inputs.repo }}
+        RUN_URL: ${{ inputs.run_url }}
+        METRICS_KEY: ${{ inputs.metrics_key }}
+        METRICS_URL: ${{ inputs.metrics_url }}
+      run: python3 "$GITHUB_ACTION_PATH/report_cost.py"
