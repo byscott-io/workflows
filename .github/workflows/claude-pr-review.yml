@@ -8,6 +8,11 @@
 #         ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
 #         CLAUDE_APP_ID:          ${{ secrets.CLAUDE_APP_ID }}
 #         CLAUDE_APP_PRIVATE_KEY: ${{ secrets.CLAUDE_APP_PRIVATE_KEY }}
+#         METRICSBYSCOTT_API_KEY: ${{ secrets.METRICSBYSCOTT_API_KEY }}
+#
+# The last one is optional and pass it anyway: without it a review's cost
+# reaches the job summary and the PR but has no history. It resolves empty in a
+# repo that holds no such secret, which the cost action treats as "no key".
 #
 # NOTE: pull_request uses the workflow file from the PR's HEAD branch, so the
 # caller must exist on that branch (branch from up-to-date master).
