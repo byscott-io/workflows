@@ -45,6 +45,10 @@ inputs:
   metrics_key:
     description: METRICSBYSCOTT_API_KEY. Omit and the cost is summary-only, with no history.
     required: false
+  billing:
+    description: "api (billed per token) or subscription (counts against plan limits; the cost is an API-equivalent estimate, not a charge)."
+    required: false
+    default: api
   metrics_url:
     description: Events endpoint.
     required: false
@@ -63,4 +67,5 @@ runs:
         RUN_URL: ${{ inputs.run_url }}
         METRICS_KEY: ${{ inputs.metrics_key }}
         METRICS_URL: ${{ inputs.metrics_url }}
+        CLAUDE_BILLING: ${{ inputs.billing }}
       run: python3 "$GITHUB_ACTION_PATH/report_cost.py"

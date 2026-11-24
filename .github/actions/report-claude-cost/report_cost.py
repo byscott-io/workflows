@@ -150,6 +150,10 @@ def publish_to_thread(repo, pr_number, table):
         post_comment(repo, pr_number, table)
 
 
+def billing():
+    return "subscription" if os.environ.get("CLAUDE_BILLING") == "subscription" else "api"
+
+
 def record_in_metrics(result, tokens):
     key = os.environ.get("METRICS_KEY")
     if not key:
@@ -166,6 +170,7 @@ def record_in_metrics(result, tokens):
             "num_turns": result.get("num_turns"),
             "duration_ms": result.get("duration_ms"),
             "run_url": os.environ.get("RUN_URL"),
+            "billing": billing(),
             **tokens,
         },
     }
@@ -206,8 +211,11 @@ def main():
     # Cache reads are shown because they dominate: the input_tokens figure
     # excludes them, so on its own it reads as though the run saw almost no
     # input (one review reported 14 input tokens against 10,850 output).
+    # On a subscription the log still prices the run at API rates, but nothing
+    # is charged: label it as the estimate it is.
+    label = "Review cost (subscription, API-equivalent)" if billing() == "subscription" else "Review cost"
     table = (
-        f"**Review cost: {cost_str}** · {turns if turns is not None else '?'} turns · {seconds}s\n\n"
+        f"**{label}: {cost_str}** · {turns if turns is not None else '?'} turns · {seconds}s\n\n"
         f"| tokens | |\n|---|---|\n"
         f"| input | {tokens['input_tokens']:,} |\n"
         f"| output | {tokens['output_tokens']:,} |\n"
